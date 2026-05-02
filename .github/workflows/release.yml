@@ -1,0 +1,49 @@
+name: "Release"
+
+on:
+  push:
+    tags:
+      - "[0-9]+.[0-9]+.[0-9]+"
+
+jobs:
+  build-and-push:
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "read"
+      packages: "write"
+
+    steps:
+      - uses: "actions/checkout@v4"
+      - uses: "DeterminateSystems/nix-installer-action@v12"
+
+      - name: "Login to ghcr.io"
+        uses: "docker/login-action@v3"
+        with:
+          registry: "ghcr.io"
+          username: "${{ github.actor }}"
+          password: "${{ secrets.GITHUB_TOKEN }}"
+
+      - name: "Build and push"
+        run: |
+          nix build .#image-amd64 --out-link image-amd64
+          nix build .#image-arm64 --out-link image-arm64
+
+          docker load < image-amd64
+          docker load < image-arm64
+          
+          REPO=ghcr.io/thenesterov/gvato
+          VERSION=${{ github.ref_name }}
+
+          for ARCH in "amd64" "arm64"; do
+            docker push "$REPO:$VERSION-$ARCH"
+            
+            docker tag "$REPO:$VERSION-$ARCH" "$REPO:latest-$ARCH"
+            docker push "$REPO:latest-$ARCH"
+          done
+
+          for TAG in "$VERSION" "latest"; do
+            docker manifest rm "$REPO:$TAG" || true
+            docker manifest create "$REPO:$TAG" "$REPO:$TAG-amd64" "$REPO:$TAG-arm64"
+            docker manifest push "$REPO:$TAG"
+          done
+
